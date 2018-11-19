@@ -4,7 +4,7 @@ def get_word_emb(vocab,dim,model):
     emb_matrix = np.zeros(shape=(len(vocab),dim))
     for word in vocab:
         if word in model:
-            emb_matrix[vocab[word]] = model[word] 
+            emb_matrix[vocab[word]-1] = model[word] 
     return emb_matrix
 
 def load_train_data(file):

@@ -3,8 +3,9 @@ from gensim.models import Word2Vec
 from util import *
 from simple_model import SimpleModel
 from tqdm import tqdm
+import pickle
 def main():
-    prefix = './{}/{}'.format('baby','baby')
+    prefix = './data/{}/{}'.format('baby','baby')
     dim = 100
     epochs = 50
     layer_size = [64,32,16,1]
@@ -14,7 +15,9 @@ def main():
     train_users,train_items,train_revs,train_rs,word_dict,maxlen = load_train_data(prefix+'_train.csv')
     test_users,test_items,test_rs = load_test_data(prefix+'_test.csv')
     vocab = get_vocab(word_dict)
-    w2v = Word2Vec.load(prefix+'_w2v.emb')
+    #w2v = Word2Vec.load(prefix+'_w2v.emb')
+    with open(prefix+'_w2v.emb','rb') as fp:
+        w2v = pickle.load(fp)
     word_emb = get_word_emb(vocab,dim,w2v)
     sess = tf.Session()
     model = SimpleModel(sess,num_users,num_items,maxlen,len(vocab),dim,layer_size,lr,alpha)
