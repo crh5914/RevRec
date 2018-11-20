@@ -47,7 +47,7 @@ class Corpus:
         self.W = np.ones(shape=(len(self.word2idx),100))
         for word in self.word2idx:
             if word in self.word2vec:
-                self.W[self.word2idx[word]] = self.word2vec[word]
+                self.W[self.word2idx[word]-1] = self.word2vec[word]
                 #print(word)
         for doc in self.docs:
             words = [self.word2idx[word] for word in doc if word in self.word2idx]
@@ -172,7 +172,7 @@ class SentimentCNN:
         l2_loss += tf.nn.l2_loss(W2)
         l2_loss += tf.nn.l2_loss(b2)
         self.y_ = tf.sigmoid(tf.reduce_sum(tf.nn.xw_plus_b(f1, W2, b2),axis=1))
-        log_loss = -tf.reduce_mean(tf.add(tf.multiply(self.y,tf.log(self.y_)),tf.multiply(1-self.y,tf.log(1-self.y_))))
+        log_loss = tf.losses.log_loss(self.y,self.y_)
         mse = tf.reduce_mean(tf.square(tf.subtract(self.y,self.y_)))
         self.loss = log_loss + self.l2_reg_lambda * l2_loss
         self.train_opt = tf.train.GradientDescentOptimizer(learning_rate=self.lr).minimize(self.loss)
@@ -233,11 +233,12 @@ def main():
     filter_sizes = [2]
     num_filters = 64
     keep_prob = 0.8
-    lr = 0.0005
+    lr = 0.001
     l2_reg_lambda = 0.0
     batch_size = 256
     epochs = 100
     model = SentimentCNN(sess,ds,dim,filter_sizes,num_filters,lr,l2_reg_lambda,keep_prob)
+    sess.run(model.word_embedding.assign(ds.W))
     model.train(epochs,batch_size)
 
 if __name__ == '__main__':
