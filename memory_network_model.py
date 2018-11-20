@@ -127,15 +127,10 @@ class SentimentCNN:
         pooled_outputs = []
         for i, filter_size in enumerate(self.filter_sizes):
             # Convolution Layer
-            filter_shape = [filter_size, self.dim, 1, self.num_filters]
-            W = tf.Variable(tf.truncated_normal(filter_shape, stddev=0.1), name="W")
-            b = tf.Variable(tf.constant(0.1, shape=[self.num_filters]), name="b")
-            conv = tf.nn.conv2d(word_vecs, W, strides=[1, 1, 1, 1], padding="VALID", name="conv")
-            # Apply nonlinearity
-            h = tf.nn.relu(tf.nn.bias_add(conv, b), name="relu")
+            kernel_size = [filter_size, self.dim]
+            conv = tf.layers.conv2d(word_vecs,self.num_filters,kernel_size,activation=tf.nn.relu)
             # Maxpooling over the outputs
-            pooled = tf.nn.max_pool(conv, ksize=[1, self.ds.max_len - filter_size + 1, 1, 1], strides=[1, 1, 1, 1],
-                                    padding='VALID', name="pool")
+            pooled = tf.layers.max_pooling2d(conv,(self.ds.max_len - filter_size + 1, 1),(1,1))
             pooled_outputs.append(pooled)
         # Combine all the pooled features
         num_filters_total = self.num_filters * len(self.filter_sizes)
