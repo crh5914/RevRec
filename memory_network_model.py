@@ -35,7 +35,6 @@ class Corpus:
         #self.word2vec = Word2Vec(self.docs,min_count=1,iter=1000,size=16,alpha=0.005,window=5)
         with open(self.prefix+'_w2v.emb','rb') as fp:
             self.word2vec = pickle.load(fp)
-        print('load data from file done. positive instances:{},negative instances:{}'.format(self.num_pos,self.num_neg))
     def build_up(self):
         self.load()
         self.build_dict()
@@ -135,7 +134,7 @@ class SentimentCNN:
             # Apply nonlinearity
             h = tf.nn.relu(tf.nn.bias_add(conv, b), name="relu")
             # Maxpooling over the outputs
-            pooled = tf.nn.max_pool(conv, ksize=[1, self.length - filter_size + 1, 1, 1], strides=[1, 1, 1, 1],
+            pooled = tf.nn.max_pool(conv, ksize=[1, self.ds.max_len - filter_size + 1, 1, 1], strides=[1, 1, 1, 1],
                                     padding='VALID', name="pool")
             pooled_outputs.append(pooled)
         # Combine all the pooled features
@@ -148,13 +147,13 @@ class SentimentCNN:
         # Final (unnormalized) scores and predictions
         f1 = tf.layers.dense(h_drop,num_filters_total//2,activation=tf.nn.relu,name='layer_1')
         f2 = tf.layers.dense(f1,self.dim,activation=tf.nn.relu,name='layer_2')
-        F = tf.layers.Dense(self.dim,1,activation=tf.nn.relu,name='prediction')
+        F = tf.layers.Dense(1,activation=tf.nn.relu,name='prediction')
         self.rating_ = F(f2)
         test_rating_ = F(trans_vec)
         self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,test_rating_)))
         self.test_mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,test_rating_)))  
         mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.rating_)))
-        tansloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,f2))))
+        transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,f2))))
         self.loss = (1-self.alpha)*mse + self.alpha*transloss
         self.train_opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
         init = tf.global_variables_initializer()
@@ -167,9 +166,9 @@ class SentimentCNN:
             for batch_users,batch_docs,batch_items,batch_ratings in tqdm(self.ds.generate_train_batch(batch_size)):
                 #batch_docs,batch_masks,batch_labels = shuffle(batch_docs,batch_masks,batch_labels)
                 feed_dict = {self.user:batch_users,self.doc:batch_docs,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:self.keep_prob,self.alpha:0.1}
-                count += len(batch_labels)
+                count += len(batch_ratings)
                 _,loss = self.sess.run([self.train_opt,self.loss],feed_dict=feed_dict)
-                losses += len(batch_labels)*loss
+                losses += len(batch_ratings)*loss
             losses = losses / count
             #acc = self.train_test(batch_size)
             mse,mae = self.test(batch_size)
@@ -180,7 +179,7 @@ class SentimentCNN:
     def test(self,batch_size):
         mse,mae,count = 0,0,0
         for batch_users,batch_items,batch_ratings in tqdm(self.ds.generate_test_batch(batch_size)):
-            feed_dict = {self.user:batch_users,self.items:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0}
+            feed_dict = {self.user:batch_users,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0}
             bmse,bmae = self.sess.run([self.test_mse,self.test_mae],feed_dict=feed_dict)
             count += len(batch_users)
             mse += bmse * len(batch_users)
