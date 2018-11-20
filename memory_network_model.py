@@ -22,7 +22,7 @@ class Corpus:
                 self.num_items = max(i,self.num_items)
                 nline = [u,i,r]
                 words = vals[2].strip().split(' ')
-                docs.append(words)
+                self.docs.append(words)
                 self.train_data.append(nline)
         with open(self.prefix+'_test.csv','r') as fp:
             for line in fp:
