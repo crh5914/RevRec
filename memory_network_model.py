@@ -1,62 +1,222 @@
 import tensorflow as tf
-
-class SimpleModel:
-    def __init__(self,sess,num_users,num_items,length,vocab_size,dim,filter_size,filter_num,layer_size,lr,alpha):
+import numpy as np
+from sklearn.metrics import accuracy_score
+from sklearn.utils import shuffle
+from gensim.models import Word2Vec
+import pickle
+from tqdm import tqdm
+class Corpus:
+    def __init__(self,prefix):
+        self.prefix = prefix
+    def load(self):
+        self.train_data = []
+        self.test_data = []
+        self.num_users = 0
+        self.num_items = 0
+        self.docs = []
+        with open(self.prefix+'_train.csv','r') as fp:
+            for line in fp:
+                vals = line.strip().split(',')
+                u,i,r = int(vals[0]),int(vals[1]),float(vals[3])
+                self.num_users = max(u,self.num_users)
+                self.num_items = max(i,self.num_items)
+                nline = [u,i,r]
+                words = vals[2].strip().split(' ')
+                docs.append(words)
+                self.train_data.append(nline)
+        with open(self.prefix+'_test.csv','r') as fp:
+            for line in fp:
+                vals = line.strip().split(',')
+                u,i,r = int(vals[0]),int(vals[1]),float(vals[3])
+                self.num_users = max(u,self.num_users)
+                self.num_items = max(i,self.num_items)
+                nline = [u,i,r]
+                self.test_data.append(nline)
+        #self.word2vec = Word2Vec(self.docs,min_count=1,iter=1000,size=16,alpha=0.005,window=5)
+        with open(self.prefix+'_w2v.emb','rb') as fp:
+            self.word2vec = pickle.load(fp)
+        print('load data from file done. positive instances:{},negative instances:{}'.format(self.num_pos,self.num_neg))
+    def build_up(self):
+        self.load()
+        self.build_dict()
+        self.map_word()
+        #self.split(0.2)
+    def build_dict(self):
+        self.d = {}
+        for doc in self.docs:
+            for word in doc:
+                self.d[word] = self.d.get(word, 0) + 1
+    def map_word(self):
+        self.word2idx = {w:i for i,w in enumerate(self.d)}
+        self.num_words = len(self.word2idx)
+        self.idx2word = {i:w for i,w in enumerate(self.d)}
+        self.numeric_docs = []
+        self.max_len = 0
+        self.W = np.ones(shape=(len(self.word2idx),100))
+        for word in self.word2idx:
+            if word in self.word2vec:
+                self.W[self.word2idx[word]-1] = self.word2vec[word]
+                #print(word)
+        for doc in self.docs:
+            words = [self.word2idx[word] for word in doc if word in self.word2idx]
+            if len(words) > self.max_len:
+                self.max_len = len(words)
+            self.numeric_docs.append(words)
+        print('word dict size:{},max length:{}'.format(len(self.word2idx),self.max_len))
+    def generate_train_batch(self,batch_size):
+        for i in range(0,len(self.numeric_docs),batch_size):
+            end = i + batch_size
+            if end > len(self.numeric_docs):
+                end = len(self.numeric_docs)
+            batch_users,batch_docs,batch_items,batch_ratings =[],[],[],[]
+            for j in range(i,end):
+                u,it,r = self.train_data[j]
+                doc = self.numeric_docs[j]
+                #print(doc,label)
+                mask = len(doc)
+                doc = doc + [len(self.word2idx)]*(self.max_len - mask)
+                batch_users.append(u-1)
+                batch_items.append(it-1)
+                batch_docs.append(doc)
+                batch_ratings.append(r)
+            yield batch_users,batch_docs,batch_items,batch_ratings
+    def generate_test_batch(self,batch_size):
+        for i in range(0,len(self.test_data),batch_size):
+            end = i + batch_size
+            if end > len(self.test_data):
+                end = len(self.test_data)
+            batch_users,batch_items,batch_ratings = [],[],[]
+            for j in range(i,end):
+                u,i,r = self.test_data[j]
+                batch_users.append(u-1)
+                batch_items.append(i-1)
+                batch_ratings.append(r)
+            yield batch_users,batch_items,batch_ratings
+class SentimentCNN:
+    def __init__(self,sess,ds,dim,filter_sizes,num_filters,lr,l2_reg_lambda,keep_prob):
         self.sess = sess
-        self.num_users = num_users
-        self.num_items = num_items
-        self.length = length
-        self.vocab_size = vocab_size
+        self.ds = ds
         self.dim = dim
-        self.layer_size = layer_size
+        self.filter_sizes = filter_sizes
+        self.num_filters = num_filters
         self.lr = lr
-        self.alpha = alpha
-        self.filter_size = filter_size
-        self.filter_num = filter_num
+        self.l2_reg_lambda = l2_reg_lambda
+        self.keep_prob = keep_prob
         self.build_up()
     def build_up(self):
         self.user = tf.placeholder(shape=[None,],dtype=tf.int32)
-        self.review = tf.placeholder(shape=[None,self.length],dtype=tf.int32)
-        self.rev_length = tf.placeholder(shape=[None,1],dtype=tf.int32)
+        self.doc = tf.placeholder(shape=[None,self.ds.max_len],dtype=tf.int32)
         self.item = tf.placeholder(shape=[None,],dtype=tf.int32)
         self.rating = tf.placeholder(shape=[None,],dtype=tf.float32)
-        self.phase = tf.placeholder(tf.bool)
-        self.word_emb = tf.Variable(tf.random_normal(shape=(self.vocab_size,self.dim),stddev=0.1),name='word_emb')
-        padd_emb = tf.constant(0.0,shape=(1,self.dim))
-        word_table = tf.concat([padd_emb,self.word_emb],axis=0)
-        user_emb = tf.Variable(tf.random_normal(shape=(self.num_users,self.dim),stddev=0.1),name='user_emb')
-        item_emb = tf.Variable(tf.random_normal(shape=(self.num_items,self.dim),stddev=0.1),name='item_emb')
-        uvec = tf.nn.embedding_lookup(user_emb,self.user)
-        itvec = tf.nn.embedding_lookup(item_emb,self.item)
-        senvec = tf.nn.embedding_lookup(word_table,self.review)
-        senvec = tf.expand_dims(senvec,axis=-1)
-        # covoluntion here
-        for size in filter_size:
-            kernel_size = [size,self.dim]
-            conv = tf.layers.conv2d(senvec,filters=self.filter_num,kernel_size=kernel_size,activation=tf.nn.relu)
-        # memory neural network or full connected tranformation
-        for i,s in enumerate(self.layer_size):
-            if i > 0:
-                prev_dim = self.layer_size[i-1]
-            fc_W['layer_W'+str(i)] = tf.Variable(tf.random_normal(shape=(prev_dim,s),stddev=0.1))
-            fc_W['layer_b'+str(i)] = tf.Variable(tf.constant(0.0,shape=(s,))) 
-            layer = tf.nn.relu(tf.add(tf.matmul(layer,fc_W['layer_W'+str(i)]),fc_W['layer_b'+str(i)]))
-            pred_layer = tf.nn.relu(tf.add(tf.matmul(pred_layer,fc_W['layer_W'+str(i)]),fc_W['layer_b'+str(i)]))
-        transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(transvec,feat)),axis=1))
-        self.y_ = tf.reduce_sum(layer,axis=1)
-        self.test_y_ = tf.reduce_sum(pred_layer,axis=1)
-        self.mse = tf.reduce_mean(tf.square(tf.subtract(self.y_,self.rating))) 
-        self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.test_y_,self.rating)))   
-        self.loss = (1-self.alpha)*transloss + self.alpha*self.mse
+        self.dropout_keep_prob = tf.placeholder(tf.float32)
+        self.alpha = tf.placeholder(tf.float32)
+        #l2_loss = tf.constant(0.0)
+        # embedding layer
+        self.word_embedding = tf.Variable(tf.truncated_normal(shape=(self.ds.num_words, self.dim), stddev=0.1))
+        user_embedding = tf.Variable(tf.truncated_normal(shape=(self.ds.num_users,self.dim),stddev=0.1))
+        item_embedding = tf.Variable(tf.truncated_normal(shape=(self.ds.num_items,self.dim),stddev=0.1))
+        # embedding lookup
+        padding_embedding = tf.constant(0.0,shape=(1,self.dim))
+        word_table = tf.concat([self.word_embedding,padding_embedding],axis=0)
+        doc_vec = tf.nn.embedding_lookup(word_table, self.doc)
+        user_vec = tf.nn.embedding_lookup(user_embedding,self.user)
+        item_vec = tf.nn.embedding_lookup(item_embedding,self.item)
+        trans_vec = tf.subtract(item_vec,user_vec)
+        #word_vecs = tf.reduce_sum(word_vecs,axis=1)
+        word_vecs = tf.expand_dims(doc_vec, -1)
+        # text cnn
+        pooled_outputs = []
+        for i, filter_size in enumerate(self.filter_sizes):
+            # Convolution Layer
+            filter_shape = [filter_size, self.dim, 1, self.num_filters]
+            W = tf.Variable(tf.truncated_normal(filter_shape, stddev=0.1), name="W")
+            b = tf.Variable(tf.constant(0.1, shape=[self.num_filters]), name="b")
+            conv = tf.nn.conv2d(word_vecs, W, strides=[1, 1, 1, 1], padding="VALID", name="conv")
+            # Apply nonlinearity
+            h = tf.nn.relu(tf.nn.bias_add(conv, b), name="relu")
+            # Maxpooling over the outputs
+            pooled = tf.nn.max_pool(conv, ksize=[1, self.length - filter_size + 1, 1, 1], strides=[1, 1, 1, 1],
+                                    padding='VALID', name="pool")
+            pooled_outputs.append(pooled)
+        # Combine all the pooled features
+        num_filters_total = self.num_filters * len(self.filter_sizes)
+        #num_filters_total = 16
+        h_pool = tf.concat(pooled_outputs, 3)
+        h_pool_flat = tf.reshape(h_pool, [-1, num_filters_total])
+        #h_pool_flat = word_vecs
+        h_drop = tf.nn.dropout(h_pool_flat, self.dropout_keep_prob)
+        # Final (unnormalized) scores and predictions
+        f1 = tf.layers.dense(h_drop,num_filters_total//2,activation=tf.nn.relu,name='layer_1')
+        f2 = tf.layers.dense(f1,self.dim,activation=tf.nn.relu,name='layer_2')
+        F = tf.layers.Dense(self.dim,1,activation=tf.nn.relu,name='prediction')
+        self.rating_ = F(f2)
+        test_rating_ = F(trans_vec)
+        self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,test_rating_)))
+        self.test_mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,test_rating_)))  
+        mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.rating_)))
+        tansloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,f2))))
+        self.loss = (1-self.alpha)*mse + self.alpha*transloss
         self.train_opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
         init = tf.global_variables_initializer()
         self.sess.run(init)
-    def train(self,us,its,revs,revlen,rs):
-        feed_dict = {self.user:us,self.review:revs,self.rev_length:revlen,self.item:its,self.rating:rs,self.phase:False}
-        _,mse,loss = self.sess.run([self.train_opt,self.mse,self.loss],feed_dict=feed_dict)
-        return mse,loss
-    def test(self,us,its,rs):
-        feed_dict = {self.user:us,self.item:its,self.rating:rs,self.phase:True}
-        y_,mse = self.sess.run([self.test_y_,self.test_mse],feed_dict=feed_dict)
-        return y_,mse
+    def train(self,epochs,batch_size):
+        best_mse,best_mae,best_epoch = 0,0,0
+        self.sess.run(tf.assign(self.word_embedding,self.ds.W))
+        for epoch in range(epochs):
+            losses,count = 0.0,0
+            for batch_users,batch_docs,batch_items,batch_ratings in tqdm(self.ds.generate_train_batch(batch_size)):
+                #batch_docs,batch_masks,batch_labels = shuffle(batch_docs,batch_masks,batch_labels)
+                feed_dict = {self.user:batch_users,self.doc:batch_docs,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:self.keep_prob,self.alpha:0.1}
+                count += len(batch_labels)
+                _,loss = self.sess.run([self.train_opt,self.loss],feed_dict=feed_dict)
+                losses += len(batch_labels)*loss
+            losses = losses / count
+            #acc = self.train_test(batch_size)
+            mse,mae = self.test(batch_size)
+            print('epoch:{},loss:{},mse:{},mae:{}'.format(epoch,losses,mse,mae))
+            if best_mse > mse:
+                best_mse,best_mae,best_epoch = mse,mae,epoch
+        print('best mse:{},mae:{},taken at epoch:{}'.format(best_mse,best_mae,best_epoch))
+    def test(self,batch_size):
+        mse,mae,count = 0,0,0
+        for batch_users,batch_items,batch_ratings in tqdm(self.ds.generate_test_batch(batch_size)):
+            feed_dict = {self.user:batch_users,self.items:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0}
+            bmse,bmae = self.sess.run([self.test_mse,self.test_mae],feed_dict=feed_dict)
+            count += len(batch_users)
+            mse += bmse * len(batch_users)
+            mae += bmae*len(batch_users)
+        mse = mse / count
+        mae = mae / count
+        return mse,mae
+    def train_test(self,batch_size):
+        ys = []
+        ys_ = []
+        for batch_docs,batch_masks,batch_labels in self.ds.generate_train_test_batch(batch_size):
+            feed_dict = {self.x:batch_docs,self.y:batch_labels,self.mask:batch_masks,self.dropout_keep_prob:1.0}
+            ys = ys + batch_labels
+            y_ = self.sess.run(self.y_,feed_dict=feed_dict)
+            #print(y_)
+            y_ = [1 if s > 0.5 else 0 for s in y_]
+            ys_ = ys_ + y_
+        accuracy = accuracy_score(ys,ys_)
+        return accuracy
+def main():
+    sess = tf.Session()
+    prefix = './data/baby/baby'
+    ds = Corpus(prefix)
+    ds.build_up()
+    dim = 100
+    filter_sizes = [2]
+    num_filters = 64
+    keep_prob = 0.8
+    lr = 0.001
+    l2_reg_lambda = 0.0
+    batch_size = 256
+    epochs = 100
+    model = SentimentCNN(sess,ds,dim,filter_sizes,num_filters,lr,l2_reg_lambda,keep_prob)
+    sess.run(model.word_embedding.assign(ds.W))
+    model.train(epochs,batch_size)
+
+if __name__ == '__main__':
+    main()
 
