@@ -210,12 +210,13 @@ def main():
     dim = 100
     filter_sizes = [2]
     num_filters = 64
+    num_mem = 16
     keep_prob = 0.8
     lr = 0.001
     l2_reg_lambda = 0.0
     batch_size = 256
     epochs = 100
-    model = SentimentCNN(sess,ds,dim,filter_sizes,num_filters,lr,l2_reg_lambda,keep_prob)
+    model = SentimentCNN(sess,ds,num_mem,dim,filter_sizes,num_filters,lr,l2_reg_lambda,keep_prob)
     sess.run(model.word_embedding.assign(ds.W))
     model.train(epochs,batch_size)
 
