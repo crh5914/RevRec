@@ -4,10 +4,15 @@ from sklearn.metrics import accuracy_score
 from sklearn.utils import shuffle
 from gensim.models import Word2Vec
 import pickle
+from nltk.corpus import stopwords
 from tqdm import tqdm
 class Corpus:
-    def __init__(self,prefix):
+    def __init__(self,prefix,threshold=0.8,filter_stop=True):
         self.prefix = prefix
+        self.threshold = threshold
+        self.stop_words = []
+        if filter_stop:
+            self.stop_words = stopwords.words('english')
     def load(self):
         self.train_data = []
         self.test_data = []
@@ -40,6 +45,17 @@ class Corpus:
         self.build_dict()
         self.map_word()
         #self.split(0.2)
+    def build_dict(self):
+        d = {}
+        for doc in self.docs:
+            for word in doc:
+                d[word] = d.get(word, 0) + 1
+        vals = sorted(d.values(),reverse=True)
+        threshold = vals[int(self.threshold*len(vals))]
+        self.d = {}
+        for word in d:
+            if d.get(word,0) > threshold and word not in self.stop_words:
+                self.d[word] = d[word]
     def build_dict(self):
         self.d = {}
         for doc in self.docs:
