@@ -92,10 +92,11 @@ class Corpus:
                 batch_ratings.append(r)
             yield batch_users,batch_items,batch_ratings
 class SentimentCNN:
-    def __init__(self,sess,ds,dim,filter_sizes,num_filters,lr,l2_reg_lambda,keep_prob):
+    def __init__(self,sess,ds,num_mem,dim,filter_sizes,num_filters,lr,l2_reg_lambda,keep_prob):
         self.sess = sess
         self.ds = ds
         self.dim = dim
+        self.num_mem = num_mem
         self.filter_sizes = filter_sizes
         self.num_filters = num_filters
         self.lr = lr
@@ -143,12 +144,19 @@ class SentimentCNN:
         f1 = tf.layers.dense(h_drop,num_filters_total//2,activation=tf.nn.relu,name='layer_1')
         f2 = tf.layers.dense(f1,self.dim,activation=tf.nn.relu,name='layer_2')
         F = tf.layers.Dense(1,activation=tf.nn.relu,name='prediction')
-        self.rating_ = F(f2)
+        rev_mem_key = tf.Variable(tf.truncated_normal(shape=(3*self.dim,self.num_mem),stddev=0.1))
+        query = tf.concat([user_vec,item_vec,f2],axis=1)
+        mem_slot = tf.Variable(tf.truncated_normal(shape=(self.num_mem,self.dim),stddev=0.1))
+        train_rev_key = tf.matmul(query,rev_mem_key)
+        train_rev_attention = tf.nn.softmax(train_rev_key)
+        #train_rev_attention = tf.expand_dims(train_rev_attention,axis=-1)
+        mem_vec = tf.matmul(train_rev_attention,mem_slot)
+        self.rating_ = F(mem_vec)
         test_rating_ = F(trans_vec)
         self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,test_rating_)))
         self.test_mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,test_rating_)))  
         mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.rating_)))
-        transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,f2))))
+        transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,men_vec))))
         self.loss = (1-self.alpha)*mse + self.alpha*transloss
         self.train_opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
         init = tf.global_variables_initializer()
