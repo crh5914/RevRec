@@ -172,7 +172,7 @@ class SentimentCNN:
         self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,test_rating_)))
         self.test_mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,test_rating_)))  
         mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.rating_)))
-        transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,men_vec))))
+        transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,mem_vec))))
         self.loss = (1-self.alpha)*mse + self.alpha*transloss
         self.train_opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
         init = tf.global_variables_initializer()
