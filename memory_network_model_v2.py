@@ -141,19 +141,23 @@ class SentimentCNN:
         item_vec = tf.nn.embedding_lookup(item_embedding,self.item)
         trans_vec = tf.subtract(item_vec,user_vec)
         #word_vecs = tf.reduce_sum(word_vecs,axis=1)
-        sum_doc_vec =tf.div(tf.reduce_sum(doc_vec,axis=1),tf.expand_dims(tf.cast(self.mask,dtype=tf.float32),axis=-1)) 
-        sum_doc_vec = tf.reshape(tf.tile(tf.expand_dims(sum_doc_vec,axis=-1),(1,self.ds.max_len,1)),(-1,self.dim))
-        flat_doc_vec = tf.reshape(doc_vec,(-1,self.dim))
-        attention_in = tf.concat([flat_doc_vec,sum_doc_vec],axis=1)
-        attentions = tf.layers.dense(attention_in,1,activation=tf.nn.relu,name='word_attetion_layer')
-        raw_weights = tf.reshape(attentions,(-1,self.ds.max_len,1))
-        mask = tf.expand_dims(tf.cast(tf.sequence_mask(self.mask,self.ds.max_len),dtype=tf.float32),axis=-1)
-        exp_weights = tf.exp(mask*raw_weights)
-        weights = tf.div(exp_weights,tf.reduce_sum(exp_weights,axis=1,keep_dims=True))
-        doc = tf.reduce_sum(weights*doc_vec,axis=1)
+        #sum_doc_vec =tf.div(tf.reduce_sum(doc_vec,axis=1),tf.expand_dims(tf.cast(self.mask,dtype=tf.float32),axis=-1)) 
+        #sum_doc_vec = tf.reshape(tf.tile(tf.expand_dims(sum_doc_vec,axis=-1),(1,self.ds.max_len,1)),(-1,self.dim))
+        #flat_doc_vec = tf.reshape(doc_vec,(-1,self.dim))
+        #attention_in = tf.concat([flat_doc_vec,sum_doc_vec],axis=1)
+        #attentions = tf.layers.dense(attention_in,1,activation=tf.nn.relu,name='word_attetion_layer')
+        #raw_weights = tf.reshape(attentions,(-1,self.ds.max_len,1))
+        #mask = tf.expand_dims(tf.cast(tf.sequence_mask(self.mask,self.ds.max_len),dtype=tf.float32),axis=-1)
+        #exp_weights = tf.exp(mask*raw_weights)
+        #weights = tf.div(exp_weights,tf.reduce_sum(exp_weights,axis=1,keep_dims=True))
+        #doc = tf.reduce_sum(weights*doc_vec,axis=1)
+        coeff = tf.expand_dims(tf.pow(tf.cast(self.mask,dtype=tf.float32),-1),axis=1)
+        doc = coeff*tf.reduce_sum(doc_vec,axis=1)
         F = tf.layers.Dense(1,activation=tf.nn.relu,name='prediction')
+        #rev_mem_key = tf.Variable(tf.truncated_normal(shape=(3*self.dim,self.num_mem),stddev=0.01))
         rev_mem_key = tf.Variable(tf.truncated_normal(shape=(3*self.dim,self.num_mem),stddev=0.01))
         query = tf.concat([user_vec,item_vec,doc],axis=1)
+        #query = doc
         mem_slot = tf.Variable(tf.truncated_normal(shape=(self.num_mem,self.dim),stddev=0.01))
         train_rev_key = tf.matmul(query,rev_mem_key)
         train_rev_attention = tf.nn.softmax(train_rev_key)
@@ -161,8 +165,9 @@ class SentimentCNN:
         mem_vec = tf.matmul(train_rev_attention,mem_slot)
         self.rating_ = F(mem_vec)
         test_rating_ = F(trans_vec)
-        self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,test_rating_)))
-        self.test_mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,test_rating_)))  
+        self.y_ = tf.reduce_sum(F(trans_vec),axis=1)
+        #self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,test_rating_)))
+        #self.test_mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,test_rating_)))  
         mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.rating_)))
         transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,mem_vec))))
         self.loss = (1-self.alpha)*mse + self.alpha*transloss
@@ -170,13 +175,13 @@ class SentimentCNN:
         init = tf.global_variables_initializer()
         self.sess.run(init)
     def train(self,epochs,batch_size):
-        best_mse,best_mae,best_epoch = 0,0,0
+        best_mse,best_mae,best_epoch = 10,10,0
         self.sess.run(tf.assign(self.word_embedding,self.ds.W))
         for epoch in range(epochs):
             losses,count = 0.0,0
             for batch_users,batch_docs,batch_masks,batch_items,batch_ratings in tqdm(self.ds.generate_train_batch(batch_size)):
                 #batch_docs,batch_masks,batch_labels = shuffle(batch_docs,batch_masks,batch_labels)
-                feed_dict = {self.user:batch_users,self.doc:batch_docs,self.mask:batch_masks,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:self.keep_prob,self.alpha:0.1}
+                feed_dict = {self.user:batch_users,self.doc:batch_docs,self.mask:batch_masks,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:self.keep_prob,self.alpha:0.7}
                 count += len(batch_ratings)
                 _,loss = self.sess.run([self.train_opt,self.loss],feed_dict=feed_dict)
                 losses += len(batch_ratings)*loss
@@ -188,15 +193,19 @@ class SentimentCNN:
                 best_mse,best_mae,best_epoch = mse,mae,epoch
         print('best mse:{},mae:{},taken at epoch:{}'.format(best_mse,best_mae,best_epoch))
     def test(self,batch_size):
-        mse,mae,count = 0,0,0
+        #mse,mae,count = 0,0,0
+        ys_,ys = [],[]
         for batch_users,batch_items,batch_ratings in tqdm(self.ds.generate_test_batch(batch_size)):
             feed_dict = {self.user:batch_users,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0}
-            bmse,bmae = self.sess.run([self.test_mse,self.test_mae],feed_dict=feed_dict)
-            count += len(batch_users)
-            mse += bmse * len(batch_users)
-            mae += bmae*len(batch_users)
-        mse = mse / count
-        mae = mae / count
+            y_ = self.sess.run(self.y_,feed_dict=feed_dict)
+            ys_ += list(y_)
+            ys += batch_ratings
+            #count += len(batch_users)
+            #mse += bmse * len(batch_users)
+            #mae += bmae*len(batch_users)
+        ys_,ys = np.array(ys_),np.array(ys)
+        mse = np.mean(np.square(ys_-ys))
+        mae = np.mean(np.abs(ys_-ys))
         return mse,mae
     def train_test(self,batch_size):
         ys = []
@@ -217,8 +226,8 @@ def main():
     ds.build_up()
     dim = 100
     filter_sizes = [2]
-    num_filters = 64
-    num_mem = 16
+    num_filters = 128
+    num_mem = 32
     keep_prob = 0.8
     lr = 0.001
     l2_reg_lambda = 0.0
