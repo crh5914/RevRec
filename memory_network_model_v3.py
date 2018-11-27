@@ -144,7 +144,6 @@ class SentimentCNN:
         user_doc_vec = tf.nn.embedding_lookup(user_doc_embedding,self.user)
         item_doc_vec = tf.nn.embedding_lookup(item_doc_embedding,self.item)
         trans_vec = tf.subtract(item_doc_vec,user_doc_vec)
-        mf_dot = tf.multiply(user_vec,item_vec)
         #word_vecs = tf.reduce_sum(word_vecs,axis=1)
         #sum_doc_vec =tf.div(tf.reduce_sum(doc_vec,axis=1),tf.expand_dims(tf.cast(self.mask,dtype=tf.float32),axis=-1)) 
         #sum_doc_vec = tf.reshape(tf.tile(tf.expand_dims(sum_doc_vec,axis=-1),(1,self.ds.max_len,1)),(-1,self.dim))
@@ -156,10 +155,11 @@ class SentimentCNN:
         #exp_weights = tf.exp(mask*raw_weights)
         #weights = tf.div(exp_weights,tf.reduce_sum(exp_weights,axis=1,keep_dims=True))
         #doc = tf.reduce_sum(weights*doc_vec,axis=1)
-        coeff = tf.expand_dims(tf.pow(tf.cast(self.mask,dtype=tf.float32),-1),axis=1)
-        doc = coeff*tf.reduce_sum(doc_vec,axis=1)
+        attented_doc = self.word_attention(doc_vec,user_vec,item_vec)
+        coeff = tf.pow(tf.cast(self.mask,dtype=tf.float32),-1)
+        #doc = coeff*tf.reduce_sum(doc_vec,axis=1)
+        doc = coeff*attented_doc
         F = tf.layers.Dense(1,activation=tf.nn.relu,name='prediction')
-        mf_rating = tf.layers.dense(1,activation=tf.nn.relu)(mf_dot)
         #rev_mem_key = tf.Variable(tf.truncated_normal(shape=(3*self.dim,self.num_mem),stddev=0.01))
         rev_mem_key = tf.Variable(tf.truncated_normal(shape=(self.dim,self.num_mem),stddev=0.01))
         #query = tf.concat([user_vec,item_vec,doc],axis=1)
@@ -169,17 +169,24 @@ class SentimentCNN:
         train_rev_attention = tf.nn.softmax(train_rev_key)
         #train_rev_attention = tf.expand_dims(train_rev_attention,axis=-1)
         mem_vec = tf.matmul(train_rev_attention,mem_slot)
-        self.rating_ = F(mem_vec) + mf_rating
-        test_rating_ = F(trans_vec) + mf_rating
+        self.rating_ = F(mem_vec)
+        test_rating_ = F(trans_vec)
         self.y_ = tf.reduce_sum(F(trans_vec),axis=1)
-        #self.test_mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,test_rating_)))
-        #self.test_mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,test_rating_)))  
         mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.rating_)))
         transloss = tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(trans_vec,mem_vec))))
         self.loss = (1-self.alpha)*mse + self.alpha*transloss
         self.train_opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
         init = tf.global_variables_initializer()
         self.sess.run(init)
+    def word_attention(self,doc,uvec,vvec):
+        uv = tf.tile(tf.expand_dims(tf.concat([uvec,vvec],axis=1),axis=1),(1,self.ds.max_len,1))
+        attention_invec = tf.reshape(tf.concat([doc,uv],axis=2),(-1,3*self.dim))
+        attention_hidden = tf.layers.dense(attention_invec,self.dim,activation=tf.nn.tanh,name='attention_hidden_layer')
+        attention_out = tf.layers.dense(attention_hidden,1,name='attention_out_layer')
+        weights = tf.expand_dims(tf.nn.softmax(tf.reshape(attention_out,(-1,self.ds.max_len))),axis=2)
+        attented_doc = tf.reduce_mean(tf.multiply(weights,doc),axis=1)
+        return attented_doc
+        
     def train(self,epochs,batch_size):
         best_mse,best_mae,best_epoch = 0,0,0
         self.sess.run(tf.assign(self.word_embedding,self.ds.W))
