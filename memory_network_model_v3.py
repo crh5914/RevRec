@@ -201,30 +201,45 @@ class SentimentCNN:
         num_filters_total = self.num_filters * len(self.filter_sizes)
         h_pool = tf.concat(pooled_outputs, 3)
         doc_feat = tf.reshape(h_pool, [-1, num_filters_total])
-        x = doc_feat
+        feat = tf.layers.dense(doc_feat,self.dim,activation=tf.nn.relu,name='transform_layer')
+        x = feat
+        x_ = out
+        layer = {}
         for i,s in enumerate(self.layer_size):
-            x = tf.layers.dense(x,s,activation=tf.nn.relu,name='full_connected_layer%d'%i)
-        self.y = tf.reduce_sum(tf.layers.dense(x,1,activation=tf.nn.relu,name='prediction_layer'),axis=1)
+            layer['layer%d'%i] = tf.layers.Dense(s,activation=tf.nn.relu,name='full_connected_layer%d'%i)
+        layer['predict_layer'] = tf.layers.Dense(1,activation=tf.nn.relu,name='prediction_layer')
+        for k in layer:
+            x = layer[k](x)
+            x_ = layer[k](x_)
+        self.y = tf.reduce_sum(x,axis=1)
+        self.y_ = tf.reduce_sum(x_,axis=1)
+        #self.loss = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.y)))
         self.mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.y)))
-        self.mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,self.y)))
-        self.train_opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.mse)
+        self.loss = (1-self.alpha)*self.mse + self.alpha*tf.reduce_mean(tf.reduce_sum(tf.square(tf.subtract(feat,out)),axis=1))
+        #self.mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,self.y_)))
+        self.train_opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
         init = tf.global_variables_initializer()
         self.sess.run(init)
     def train(self,epochs,batch_size):
         best_mse,best_mae,best_epoch = 10,10,0
         #self.sess.run(tf.assign(self.word_embedding,self.ds.W))
+        mse,mae = self.test(batch_size)
+        print('init,mse:{},mae:{}'.format(mse,mae))
         for epoch in range(epochs):
-            losses,count = 0.0,0
-            for batch_users,batch_docs,batch_masks,batch_items,batch_ratings in tqdm(self.ds.get_train_batch(batch_size)):
+            losses,tmse,count = 0.0,0,0
+            for batch_users,batch_docs,batch_masks,batch_items,batch_ratings in tqdm(self.ds.generate_train_batch(batch_size)):
                 #batch_docs,batch_masks,batch_labels = shuffle(batch_docs,batch_masks,batch_labels)
-                feed_dict = {self.user:batch_users,self.doc:batch_docs,self.mask:batch_masks,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:self.keep_prob,self.alpha:0.1}
+                feed_dict = {self.user:batch_users,self.doc:batch_docs,self.mask:batch_masks,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:self.keep_prob,self.alpha:0.5}
                 count += len(batch_ratings)
-                _,loss = self.sess.run([self.train_opt,self.mse],feed_dict=feed_dict)
+                _,bmse,loss = self.sess.run([self.train_opt,self.mse,self.loss],feed_dict=feed_dict)
                 losses += len(batch_ratings)*loss
+                tmse += len(batch_ratings)*bmse
             losses = losses / count
+            tmse = tmse / count
             #acc = self.train_test(batch_size)
-            mse,mae = self.valid(batch_size)
-            print('epoch:{},loss:{},mse:{},mae:{}'.format(epoch,losses,mse,mae))
+            #mse,mae = self.valid(batch_size)
+            mse,mae = self.test(batch_size)
+            print('epoch:{},loss:{},train_mse:{},test_mse:{},test_mae:{}'.format(epoch,losses,tmse,mse,mae))
             if best_mse > mse:
                 best_mse,best_mae,best_epoch = mse,mae,epoch
         print('best mse:{},mae:{},taken at epoch:{}'.format(best_mse,best_mae,best_epoch))
@@ -232,7 +247,7 @@ class SentimentCNN:
         #mse,mae,count = 0,0,0
         ys_,ys = [],[]
         for batch_users,batch_items,batch_ratings in tqdm(self.ds.generate_test_batch(batch_size)):
-            feed_dict = {self.user:batch_users,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0}
+            feed_dict = {self.user:batch_users,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0,self.alpha:0.1}
             y_ = self.sess.run(self.y_,feed_dict=feed_dict)
             ys_ += list(y_)
             ys += batch_ratings
