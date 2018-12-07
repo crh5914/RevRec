@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument("--l2_reg_lambda", type=float,default=0.0, help="L2 regularizaion lambda")
     parser.add_argument("--l2_reg_V",type=float,default=0.0,help="L2 regularizaion V")
     # Training parameters
-    parser.add_argument("--batch_size",type=int,default=100,help="Batch Size ")
+    parser.add_argument("--batch_size",type=int,default=128,help="Batch Size ")
     parser.add_argument("--num_epochs", type=int,default=40, help="Number of training epochs ")
     parser.add_argument("--evaluate_every",type=int,default=100,help="Evaluate model on dev set after this many steps ")
     parser.add_argument("--checkpoint_every",type=int,default=100, help="Save model after this many steps ")
@@ -164,7 +164,7 @@ if __name__ == '__main__':
                     current_step = tf.train.global_step(sess, global_step)
                     train_rmse += np.square(t_rmse)*len(uid)
                     train_mae += t_mae*len(iid)
-                    if batch_num % 1000 == 0 and batch_num > 1:
+                    if batch_num % 300 == 0 and batch_num > 1:
                         loss_s = 0
                         accuracy_s = 0
                         mae_s = 0
@@ -173,14 +173,14 @@ if __name__ == '__main__':
                             loss_s = loss_s + len(uid) * loss
                             accuracy_s = accuracy_s + len(uid) * np.square(accuracy)
                             mae_s = mae_s + len(uid) * mae
-                        print ("epoch:{},in training evaluation,loss:{:g}, rmse:{:g}, mae:{:g}".format(epoch,loss_s / data_size_test,np.sqrt(accuracy_s / data_size_test),mae_s / data_size_test))
+                        print ("epoch:{},in training evaluation,loss:{:g}, rmse:{:g}, mae:{:g}".format(epoch,loss_s / test_length,np.sqrt(accuracy_s / test_length),mae_s / test_length))
                 print("epoch:{},training,rmse:{},mae:{}".format(epoch,train_rmse/train_length, train_mae / train_length))
                 train_rmse = 0
                 train_mae = 0
                 loss_s = 0
                 accuracy_s = 0
                 mae_s = 0
-                for uid, iid, y_batch, u_batch, i_batch in generate_batch(train_data,user_text,item_text,batch_size):
+                for uid, iid, y_batch, u_batch, i_batch in generate_batch(test_data,user_text,item_text,batch_size):
                     loss, accuracy, mae = dev_step(u_batch, i_batch, uid, iid, y_batch)
                     loss_s = loss_s + len(uid) * loss
                     accuracy_s = accuracy_s + len(uid) * np.square(accuracy)
