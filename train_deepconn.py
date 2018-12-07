@@ -23,14 +23,14 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description='run model')
     parser.add_argument('--dataset',type=str,default='baby',help='specify the dataset')
-    parser.add_argument('--embedding_dim', type=int, default=300, help="Dimensionality of character embedding")
+    parser.add_argument('--embedding_dim', type=int, default=100, help="Dimensionality of character embedding")
     parser.add_argument('--filter_sizes', type=str, default='[3]', help='filter size')
     parser.add_argument("--num_filters", type=int,default=100,help="Number of filters per filter size")
     parser.add_argument("--dropout_keep_prob",type=float,default=0.5,help="Dropout keep probability ")
-    parser.add_argumentt("--l2_reg_lambda", type=float,default=0.0, help="L2 regularizaion lambda")
+    parser.add_argument("--l2_reg_lambda", type=float,default=0.0, help="L2 regularizaion lambda")
     parser.add_argument("--l2_reg_V",type=float,default=0.0,help="L2 regularizaion V")
     # Training parameters
-    parser.add_argumentr("--batch_size",type=int,default=100,help="Batch Size ")
+    parser.add_argument("--batch_size",type=int,default=100,help="Batch Size ")
     parser.add_argument("--num_epochs", type=int,default=40, help="Number of training epochs ")
     parser.add_argument("--evaluate_every",type=int,default=100,help="Evaluate model on dev set after this many steps ")
     parser.add_argument("--checkpoint_every",type=int,default=100, help="Save model after this many steps ")
@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument("--log_device_placement",type=bool,default=False,help="Log placement of ops on devices")
     return parser.parse_args()
 
-def train_step(u_batch, i_batch, uid, iid, y_batch):
+def train_step(u_batch, i_batch, uid, iid, y_batch,args):
     """
     A single training step
     """
@@ -49,7 +49,7 @@ def train_step(u_batch, i_batch, uid, iid, y_batch):
         deep.input_y: y_batch,
         deep.input_uid: uid,
         deep.input_iid: iid,
-        deep.dropout_keep_prob: FLAGS.dropout_keep_prob
+        deep.dropout_keep_prob: args.dropout_keep_prob
     }
     _, step, loss, accuracy, mae = sess.run(
         [train_op, global_step, deep.loss, deep.accuracy, deep.mae],
@@ -80,21 +80,21 @@ def dev_step(u_batch, i_batch, uid, iid, y_batch, writer=None):
     # print("{}: step{}, loss {:g}, rmse {:g},mae {:g}".format(time_str, step, loss, accuracy, mae))
 
     return [loss, accuracy, mae]
-def generate_batch(train_data,batch_size):
-    train_data_size = len(train_data)
-    shuffle_indices = np.random.permutation(np.range(train_data_size))
-    ll = int(len(train_data) / batch_size)
+def generate_batch(data,user_text,item_text,batch_size):
+    data_size = len(data)
+    shuffle_indices = np.random.permutation(range(data_size))
+    ll = int(len(data) / batch_size)
     for batch_num in range(ll):
         start_index = batch_num * batch_size
-        end_index = min((batch_num + 1) * batch_size, train_data_size)
+        end_index = min((batch_num + 1) * batch_size,data_size)
         uid, iid, y_batch, u_batch, i_batch = [],[],[],[],[]
         for idx in range(start_index,end_index):
-            u,i,r,utext,ittext = train_data[idx]
+            u,i,r = data[idx]
             uid.append([u])
             iid.append([i])
             y_batch.append([r])
-            u_batch.append(utext)
-            i_batch.append(ittext)
+            u_batch.append(user_text[u])
+            i_batch.append(item_text[i])
         yield uid,iid,y_batch,u_batch,i_batch
 if __name__ == '__main__':
     args = parse_args()
@@ -102,15 +102,16 @@ if __name__ == '__main__':
     print("Loading data...")
     prefix = './data/{}/{}'.format(args.dataset,args.dataset)
     with open(prefix+'_aggregated_param.pkl','rb') as fp:
-        param = pickle.load(fp)
+        para = pickle.load(fp)
     user_num = para['num_users']
     item_num = para['num_items']
     user_length = para['user_length']
     item_length = para['item_length']
     uvocab_size = para['uvocab_size']
     itvocab_size = para['itvocab_size']
-    train_length = param['train_length']
-    test_length = param['test_length']
+    train_length = para['train_length']
+    test_length = para['test_length']
+    print('uvocab size:{},itvocab size:{},user length:{},item length:{}'.format(uvocab_size,itvocab_size,user_length,item_length))
     with tf.Graph().as_default():
         session_conf = tf.ConfigProto(
             allow_soft_placement=args.allow_soft_placement,
@@ -146,16 +147,20 @@ if __name__ == '__main__':
             train_rmse = 0
             with open(prefix+'_aggregated_train.pkl','rb') as fp:
                 train_data = pickle.load(fp)
-
             with open(prefix+'_aggregated_test.pkl','rb') as fp:
                 test_data = pickle.load(fp)
+            with open(prefix+'_aggregated_itreview.pkl','rb') as fp:
+                item_text = pickle.load(fp)
+            with open(prefix+'_aggregated_ureview.pkl','rb') as fp:
+                user_text = pickle.load(fp)
+            print('load data done..')
             batch_size = args.batch_size
             for epoch in range(40):
                 # Shuffle the data at each epoch
                 batch_num = 0
-                for uid,iid,y_batch,u_batch,i_batch in generate_batch(train_data,batch_size):
+                for uid,iid,y_batch,u_batch,i_batch in generate_batch(train_data,user_text,item_text,batch_size):
                     batch_num += 1
-                    t_rmse, t_mae = train_step(u_batch, i_batch, uid, iid, y_batch)
+                    t_rmse, t_mae = train_step(u_batch, i_batch, uid, iid, y_batch,args)
                     current_step = tf.train.global_step(sess, global_step)
                     train_rmse += np.square(t_rmse)*len(uid)
                     train_mae += t_mae*len(iid)
@@ -163,7 +168,7 @@ if __name__ == '__main__':
                         loss_s = 0
                         accuracy_s = 0
                         mae_s = 0
-                        for uid,iid,y_batch,u_batch,i_batch in generate_batch(test_data,batch_size):
+                        for uid,iid,y_batch,u_batch,i_batch in generate_batch(test_data,user_text,item_text,batch_size):
                             loss, accuracy, mae = dev_step(u_batch, i_batch,uid, iid, y_batch)
                             loss_s = loss_s + len(uid) * loss
                             accuracy_s = accuracy_s + len(uid) * np.square(accuracy)
@@ -175,7 +180,7 @@ if __name__ == '__main__':
                 loss_s = 0
                 accuracy_s = 0
                 mae_s = 0
-                for uid, iid, y_batch, u_batch, i_batch in generate_batch(test_data, batch_size):
+                for uid, iid, y_batch, u_batch, i_batch in generate_batch(train_data,user_text,item_text,batch_size):
                     loss, accuracy, mae = dev_step(u_batch, i_batch, uid, iid, y_batch)
                     loss_s = loss_s + len(uid) * loss
                     accuracy_s = accuracy_s + len(uid) * np.square(accuracy)
