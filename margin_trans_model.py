@@ -114,7 +114,7 @@ class Corpus:
             end = i + batch_size
             if end > len(self.numeric_docs):
                 end = len(self.numeric_docs)
-            batch_users, batch_docs, batch_masks, batch_items,batch_ratings = [], [],[], [], [], []
+            batch_users, batch_docs, batch_masks, batch_items,batch_ratings = [], [], [], [], []
             for j in range(i, end):
                 u, it, r = self.train_data[j]
                 doc = self.numeric_docs[j]
@@ -200,7 +200,7 @@ class MarginTransModel:
         h_pool = tf.concat(pooled_outputs, 3)
         doc_feat = tf.reshape(h_pool, [-1, num_filters_total])
         T = tf.Variable(tf.random_normal(shape=(num_filters_total,self.dim),stddev=0.01),name='T')
-        bt = tf.Variable(tf.constant(0.0,shape=(self.layer_size[0],)),name='bt')
+        bt = tf.Variable(tf.constant(0.0,shape=(self.dim,)),name='bt')
         feat = tf.nn.relu(tf.matmul(doc_feat,T) + bt)
         #feat = tf.layers.dense(doc_feat, self.dim, activation=tf.nn.relu, name='transform_layer')
 
@@ -244,6 +244,7 @@ class MarginTransModel:
                 _, bmse, loss = self.sess.run([self.train_opt, self.mse, self.loss], feed_dict=feed_dict)
                 losses += len(batch_ratings) * loss
                 tmse += len(batch_ratings) * bmse
+                batch_num += 1
                 if batch_num % 300 == 0:
                     mse, mae = self.test(batch_size)
                     print('in trainning,test_rmse:{},test_mae:{}'.format(np.sqrt(mse), mae))
@@ -278,7 +279,7 @@ def main():
     ds = Corpus(prefix)
     ds.build_up()
     model = MarginTransModel(sess, ds, args.num_mem, args.embedding_size, args.dim, eval(args.filter_sizes), args.num_filters, eval(args.layer_size), args.lr,
-                         args.l2_reg_lambda, args.keep_prob)
+                         args.l2_reg_lambda, args.dropout_keep_prob)
     model.train(args.num_epochs, args.batch_size)
 
 
