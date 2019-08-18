@@ -86,9 +86,11 @@ class Corpus:
         #lens = sorted(lens)
         self.max_len = 300
         print('word dict size:{},max length:{}'.format(len(self.word2idx),self.max_len))
-    def generate_train_batch(self,batch_size):
+    def generate_train_batch(self,batch_size,shuffle=True):
+        #if shuffle:
         idx = list(range(len(self.numeric_docs)))
-        np.random.shuffle(idx)
+        if shuffle:
+            np.random.shuffle(idx)
         for i in range(0,len(self.numeric_docs),batch_size):
             end = i + batch_size
             if end > len(self.numeric_docs):
@@ -178,8 +180,8 @@ class SentimentCNN:
         key_hidden = tf.nn.tanh(tf.matmul(uv,AWh) + bh)
         raw_weights = tf.matmul(key_hidden,AWo) + bo
         #key = tf.nn.softmax(raw_weights,axis=1)
-        key = tf.nn.tanh(raw_weights)
-        out = tf.matmul(key,memory)
+        self.key = tf.nn.tanh(raw_weights)
+        self.out = tf.matmul(self.key,memory)
         word_vecs = tf.expand_dims(doc_vec, -1)
         #mr = tf.reduce_sum(tf.multiply(user_vec,item_vec),axis=1)
         #text cnn
@@ -195,11 +197,11 @@ class SentimentCNN:
         num_filters_total = self.num_filters * len(self.filter_sizes)
         h_pool = tf.concat(pooled_outputs, 3)
         doc_feat = tf.reshape(h_pool, [-1, num_filters_total])
-        feat = tf.layers.dense(doc_feat,self.dim,activation=tf.nn.relu,name='transform_layer')
+        self.feat = tf.layers.dense(doc_feat,self.dim,activation=tf.nn.relu,name='transform_layer')
         #x =tf.concat([feat,mr],axis=1)
-        x = feat
+        x = self.feat
         #x_ = tf.concat([out,mr],axis=1)
-        x_ = out
+        x_ = self.out
         W1 = tf.Variable(tf.random_normal(shape=(self.dim,self.layer_size[0]),stddev=0.01),name="W1")
         b1 = tf.Variable(tf.constant(0.0,shape=(self.layer_size[0],)),name="b1")
         W2 = tf.Variable(tf.random_normal(shape=(self.layer_size[0],1),stddev=0.01),name="W2")
@@ -215,7 +217,7 @@ class SentimentCNN:
         self.mse = tf.reduce_mean(tf.square(tf.subtract(self.rating,self.y)))
         #self.loss = tf.nn.l2_loss(tf.subtract(self.rating,self.y)) + tf.nn.l2_loss(tf.subtract(feat,out))
         regloss = tf.nn.l2_loss(W1) + tf.nn.l2_loss(W2) + tf.nn.l2_loss(AWh) + tf.nn.l2_loss(AWo)
-        self.loss = self.mse + tf.nn.l2_loss(tf.subtract(feat,out)) + self.l2_reg_lambda*regloss
+        self.loss = self.mse + tf.nn.l2_loss(tf.subtract(self.feat,self.out)) + self.l2_reg_lambda*regloss
         #self.mae = tf.reduce_mean(tf.abs(tf.subtract(self.rating,self.y_)))
         #optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
@@ -239,8 +241,29 @@ class SentimentCNN:
             mse,mae = self.test(batch_size)
             print('epoch:{},loss:{},train_mse:{},train_mae:{},valid_mse:{},valid_mae:{},test_mse:{},test_mae:{}'.format(epoch,losses,tmse,tmae,vmse,vmae,mse,mae))
             if best_mse > mse:
+                self.save_weights()
                 best_mse,best_mae,best_epoch = mse,mae,epoch
         print('best mse:{},mae:{},taken at epoch:{}'.format(best_mse,best_mae,best_epoch))
+    def save_weights(self):
+        train_feat = []
+        for batch_users,batch_docs,batch_masks,batch_items,batch_ratings in self.ds.generate_train_batch(256,shuffle=False):
+            feed_dict = {self.user:batch_users,self.doc:batch_docs,self.mask:batch_masks,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0,self.alpha:0.1}
+            feats = self.sess.run(self.feat,feed_dict=feed_dict)
+            #print(np.shape(feats))
+            train_feat.append(feats)
+        train_feat = np.vstack(train_feat)
+        #print(np.shape(train_feat))
+        with open("./train_feat.pkl","wb") as fp:
+            pickle.dump(train_feat,fp)
+        test_out = []
+        for batch_users,batch_items,batch_ratings in self.ds.generate_test_batch(256):
+            feed_dict = {self.user:batch_users,self.item:batch_items,self.rating:batch_ratings,self.dropout_keep_prob:1.0,self.alpha:0.1}
+            out = self.sess.run(self.out,feed_dict=feed_dict)
+            test_out.append(out)
+        test_out = np.vstack(test_out)
+        #print(np.shape(test_out))
+        with open("./test_out.pkl","wb") as fp:
+            pickle.dump(test_out,fp)
     def test_train(self,batch_size):
         ys_,ys = [],[]
         for batch_users,batch_docs,batch_masks,batch_items,batch_ratings in tqdm(self.ds.generate_train_batch(batch_size)):
